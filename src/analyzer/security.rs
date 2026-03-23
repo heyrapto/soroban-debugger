@@ -1,4 +1,5 @@
 use crate::runtime::executor::ContractExecutor;
+use crate::utils::wasm::{parse_instructions, WasmInstruction};
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use wasmparser::{Parser, Payload};
@@ -135,13 +136,58 @@ impl SecurityRule for ArithmeticCheckRule {
         "Detects potential for unchecked arithmetic overflow."
     }
 
-    fn analyze_static(&self, _wasm_bytes: &[u8]) -> Result<Vec<SecurityFinding>> {
-        // In WASM, arithmetic is generally "unchecked" (wraps or traps depending on type).
-        // Soroban SDK usually uses checked arithmetic by default, but developers might use raw primitives.
-        // This is hard to detect statically without DWARF info.
-        // For now, we flag use of basic i32/i64 arithmetic opcodes if they seem frequent?
-        // Actually, let's keep it as a placeholder or look for lack of "panic" branches after adds.
-        Ok(vec![])
+    fn analyze_static(&self, wasm_bytes: &[u8]) -> Result<Vec<SecurityFinding>> {
+        let mut findings = Vec::new();
+        let instructions = parse_instructions(wasm_bytes);
+
+        for (i, instr) in instructions.iter().enumerate() {
+            if Self::is_arithmetic(instr) && !Self::is_guarded(&instructions, i) {
+                findings.push(SecurityFinding {
+                    rule_id: self.name().to_string(),
+                    severity: Severity::Medium,
+                    location: format!("Instruction {}", i),
+                    description: format!(
+                        "Unchecked arithmetic operation detected: {:?}",
+                        instr
+                    ),
+                    remediation: "Ensure arithmetic operations are guarded with proper bounds checks or overflow handling.".to_string(),
+                });
+            }
+        }
+
+        Ok(findings)
+    }
+}
+
+impl ArithmeticCheckRule {
+    /// Check if an instruction is an arithmetic operation.
+    fn is_arithmetic(instr: &WasmInstruction) -> bool {
+        matches!(
+            instr,
+            WasmInstruction::I32Add
+                | WasmInstruction::I32Sub
+                | WasmInstruction::I32Mul
+                | WasmInstruction::I64Add
+                | WasmInstruction::I64Sub
+                | WasmInstruction::I64Mul
+        )
+    }
+
+    /// Check if an arithmetic operation is guarded by control flow or external function call.
+    fn is_guarded(instructions: &[WasmInstruction], idx: usize) -> bool {
+        let start = idx.saturating_sub(2);
+        let end = (idx + 3).min(instructions.len());
+
+        for i in start..end {
+            match instructions[i] {
+                WasmInstruction::If | WasmInstruction::BrIf | WasmInstruction::Call => {
+                    return true
+                }
+                _ => {}
+            }
+        }
+
+        false
     }
 }
 

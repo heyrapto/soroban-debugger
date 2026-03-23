@@ -1,5 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+/// Source location information (file, line, column)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceLocation {
+    /// Source file path (relative or absolute)
+    pub file: String,
+    /// 1-based line number
+    pub line: u32,
+    /// 0-based column (optional)
+    pub column: Option<u32>,
+}
+
 /// Wire protocol messages for remote debugging
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -79,6 +90,7 @@ pub enum DebugResponse {
         error: Option<String>,
         paused: bool,
         completed: bool,
+        source_location: Option<SourceLocation>,
     },
 
     /// Step result
@@ -86,6 +98,7 @@ pub enum DebugResponse {
         paused: bool,
         current_function: Option<String>,
         step_count: u64,
+        source_location: Option<SourceLocation>,
     },
 
     /// Continue result
@@ -94,6 +107,7 @@ pub enum DebugResponse {
         output: Option<String>,
         error: Option<String>,
         paused: bool,
+        source_location: Option<SourceLocation>,
     },
 
     /// Inspection result
@@ -103,6 +117,7 @@ pub enum DebugResponse {
         step_count: u64,
         paused: bool,
         call_stack: Vec<String>,
+        source_location: Option<SourceLocation>,
     },
 
     /// Storage state

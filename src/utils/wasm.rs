@@ -10,6 +10,44 @@ use wasmparser::{Parser, Payload, ValType};
 pub use crate::analyzer::upgrade::FunctionSignature;
 // ─── existing public API (unchanged) ─────────────────────────────────────────
 
+// ─── arithmetic analysis (new) ────────────────────────────────────────────────
+
+/// Decoded WASM instruction for arithmetic analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WasmInstruction {
+    I32Add,
+    I32Sub,
+    I32Mul,
+    I64Add,
+    I64Sub,
+    I64Mul,
+    If,
+    BrIf,
+    Call,
+    Unknown(u8),
+}
+
+/// Decode a single WASM instruction byte to its instruction type.
+fn decode_instruction(byte: u8) -> WasmInstruction {
+    match byte {
+        0x6A => WasmInstruction::I32Add,
+        0x6B => WasmInstruction::I32Sub,
+        0x6C => WasmInstruction::I32Mul,
+        0x7C => WasmInstruction::I64Add,
+        0x7D => WasmInstruction::I64Sub,
+        0x7E => WasmInstruction::I64Mul,
+        0x04 => WasmInstruction::If,
+        0x0D => WasmInstruction::BrIf,
+        0x10 => WasmInstruction::Call,
+        other => WasmInstruction::Unknown(other),
+    }
+}
+
+/// Parse WASM bytecode into a vector of instructions (single-pass linear scan).
+pub fn parse_instructions(wasm: &[u8]) -> Vec<WasmInstruction> {
+    wasm.iter().map(|b| decode_instruction(*b)).collect()
+}
+
 /// Compute the SHA-256 checksum of a WASM binary.
 pub fn compute_checksum(wasm_bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
