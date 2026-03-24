@@ -28,6 +28,35 @@ impl SymbolicAnalyzer {
         Self
     }
 
+    fn record_outcome(
+        report: &mut SymbolicReport,
+        seen_inputs: &mut HashSet<String>,
+        inputs: &str,
+        outcome: std::result::Result<String, String>,
+    ) {
+        // Keep distinct paths even when outputs/errors are identical.
+        // Only dedupe when the exact same input set is re-encountered.
+        if !seen_inputs.insert(inputs.to_string()) {
+            return;
+        }
+
+        match outcome {
+            Ok(val) => report.paths.push(PathResult {
+                inputs: inputs.to_string(),
+                return_value: Some(val),
+                panic: None,
+            }),
+            Err(err_str) => {
+                report.panics_found += 1;
+                report.paths.push(PathResult {
+                    inputs: inputs.to_string(),
+                    return_value: None,
+                    panic: Some(err_str),
+                });
+            }
+        }
+    }
+
     pub fn analyze(&self, wasm: &[u8], function: &str) -> Result<SymbolicReport> {
         let arg_count = self.get_arg_count(wasm, function).unwrap_or(0);
         let combinations = self.generate_input_combinations(arg_count);
@@ -39,8 +68,7 @@ impl SymbolicAnalyzer {
             paths: Vec::new(),
         };
 
-        // We use a set of strings to consider a "path" as unique by its return value or panic
-        let mut unique_outcomes = HashSet::new();
+        let mut seen_inputs = HashSet::new();
 
         for args_json in combinations.iter().take(100) {
             let executor_res = std::panic::catch_unwind(|| {
@@ -53,34 +81,23 @@ impl SymbolicAnalyzer {
 
             match executor_res {
                 Ok(Ok(val)) => {
-                    if unique_outcomes.insert(format!("OK:{}", val)) {
-                        report.paths.push(PathResult {
-                            inputs: args_json.clone(),
-                            return_value: Some(val),
-                            panic: None,
-                        });
-                    }
+                    Self::record_outcome(&mut report, &mut seen_inputs, args_json, Ok(val));
                 }
                 Ok(Err(err)) => {
-                    let err_str = err.to_string();
-                    if unique_outcomes.insert(format!("ERR:{}", err_str)) {
-                        report.panics_found += 1;
-                        report.paths.push(PathResult {
-                            inputs: args_json.clone(),
-                            return_value: None,
-                            panic: Some(err_str),
-                        });
-                    }
+                    Self::record_outcome(
+                        &mut report,
+                        &mut seen_inputs,
+                        args_json,
+                        Err(err.to_string()),
+                    );
                 }
                 Err(_) => {
-                    if unique_outcomes.insert("PANIC:HOST".to_string()) {
-                        report.panics_found += 1;
-                        report.paths.push(PathResult {
-                            inputs: args_json.clone(),
-                            return_value: None,
-                            panic: Some("Host Panic".to_string()),
-                        });
-                    }
+                    Self::record_outcome(
+                        &mut report,
+                        &mut seen_inputs,
+                        args_json,
+                        Err("Host Panic".to_string()),
+                    );
                 }
             }
             report.paths_explored += 1;
@@ -211,5 +228,45 @@ impl SymbolicAnalyzer {
         }
 
         toml
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn distinct_inputs_with_same_output_are_not_deduped() {
+        let mut report = SymbolicReport {
+            function: "f".to_string(),
+            paths_explored: 0,
+            panics_found: 0,
+            paths: Vec::new(),
+        };
+        let mut seen_inputs = HashSet::new();
+
+        SymbolicAnalyzer::record_outcome(&mut report, &mut seen_inputs, "[0]", Ok("1".into()));
+        SymbolicAnalyzer::record_outcome(&mut report, &mut seen_inputs, "[1]", Ok("1".into()));
+
+        assert_eq!(report.paths.len(), 2);
+        assert_eq!(report.panics_found, 0);
+        assert_eq!(report.paths[0].return_value.as_deref(), Some("1"));
+        assert_eq!(report.paths[1].return_value.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn identical_inputs_are_deduped() {
+        let mut report = SymbolicReport {
+            function: "f".to_string(),
+            paths_explored: 0,
+            panics_found: 0,
+            paths: Vec::new(),
+        };
+        let mut seen_inputs = HashSet::new();
+
+        SymbolicAnalyzer::record_outcome(&mut report, &mut seen_inputs, "[0]", Ok("1".into()));
+        SymbolicAnalyzer::record_outcome(&mut report, &mut seen_inputs, "[0]", Ok("1".into()));
+
+        assert_eq!(report.paths.len(), 1);
     }
 }
